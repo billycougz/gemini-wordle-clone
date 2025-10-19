@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wordle Clone</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for tile flip animation */
+        @keyframes flip-in {
+            0% { transform: rotateX(0deg); }
+            50% { transform: rotateX(90deg); }
+            100% { transform: rotateX(0deg); }
+        }
+
+        /* Specific CSS for the tiles */
+        .tile {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.8rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: #d7dadc;
+            border: 2px solid #3a3a3c;
+            user-select: none;
+            transition: all 0.3s ease-in-out;
+            transform-style: preserve-3d;
+        }
+
+        .tile.filled {
+            border-color: #565758;
+        }
+
+        /* Color classes, applied after checkGuess */
+        .tile.correct {
+            background-color: #538d4e; /* Green */
+            border-color: #538d4e;
+            animation: flip-in 0.6s;
+            color: white;
+        }
+
+        .tile.present {
+            background-color: #b59f3b; /* Yellow */
+            border-color: #b59f3b;
+            animation: flip-in 0.6s;
+            color: white;
+        }
+
+        .tile.absent {
+            background-color: #3a3a3c; /* Gray */
+            border-color: #3a3a3c;
+            animation: flip-in 0.6s;
+            color: white;
+        }
+
+        /* Keyboard key style */
+        .key {
+            padding: 8px 0;
+            margin: 2px;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            background-color: #818384; /* Default key color */
+            color: white;
+            flex-grow: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            user-select: none;
+        }
+
+        .key:active {
+            transform: translateY(1px);
+        }
+
+        .key.correct { background-color: #538d4e; }
+        .key.present { background-color: #b59f3b; }
+        .key.absent { background-color: #3a3a3c; }
+
+        /* Custom small key widths */
+        .key-lg {
+            flex-grow: 1.5;
+        }
+
+        /* Modal styling */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 100;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.4);
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background-color: #1a1a1a;
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            color: white;
+            max-width: 90%;
+            width: 400px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.5);
+        }
+    </style>
+</head>
+<body class="bg-[#121213] min-h-screen flex flex-col items-center p-4 font-sans text-white">
+
+    <!-- Header -->
+    <header class="w-full max-w-lg mb-6 border-b border-[#3a3a3c] pb-2">
+        <h1 class="text-3xl font-extrabold text-center tracking-wider">WORDLE CLONE</h1>
+    </header>
+
+    <!-- Game Grid -->
+    <div id="game-grid" class="grid gap-1.5" style="grid-template-rows: repeat(6, 1fr); max-width: 350px; aspect-ratio: 5 / 6;">
+        <!-- Rows will be injected here by JS -->
+    </div>
+
+    <!-- Message Box -->
+    <div id="message-box" class="fixed top-20 bg-white text-gray-900 px-4 py-2 rounded-lg shadow-xl opacity-0 transition-opacity duration-300 pointer-events-none text-sm font-semibold">
+        <!-- Messages appear here -->
+    </div>
+
+    <!-- Virtual Keyboard -->
+    <div id="keyboard-container" class="mt-8 w-full max-w-md">
+        <!-- Keyboard rows -->
+        <div id="keyboard-row-1" class="flex justify-center text-xs sm:text-sm"></div>
+        <div id="keyboard-row-2" class="flex justify-center text-xs sm:text-sm mt-1"></div>
+        <div id="keyboard-row-3" class="flex justify-center text-xs sm:text-sm mt-1"></div>
+    </div>
+
+    <!-- Result Modal -->
+    <div id="result-modal" class="modal">
+        <div class="modal-content">
+            <h2 id="modal-title" class="text-2xl font-bold mb-4"></h2>
+            <p id="modal-message" class="text-lg mb-6"></p>
+            <button id="modal-close" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200">
+                Play Again
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- Game Configuration ---
+        const WORD_LENGTH = 5;
+        const MAX_ATTEMPTS = 6;
+        const KEYBOARD_LAYOUT = [
+            ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+            ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
+            ['ENTER', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', 'BACKSPACE']
+        ];
+        
+        // This is the list of words the game will select as the ANSWER. It remains small.
+        const VALID_WORDS = [
+            'APPLE', 'PLANE', 'CRANE', 'GHOST', 'SHAPE', 'TABLE', 'CHAIR', 'FRUIT', 'WATER', 'BRICK',
+            'SMILE', 'GRASS', 'CLOUD', 'OCEAN', 'TRAIN', 'SUGAR', 'TIGER', 'MONEY', 'LIGHT', 'DREAM',
+            'EARTH', 'BLAZE', 'RIVER', 'SPACE', 'WORLD', 'POWER', 'MUSIC', 'STORY', 'FIERY', 'JUICE'
+        ];
+
+        // --- API Configuration ---
+        const apiKey = ""; 
+        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+        const WORD_CHECK_SYSTEM_PROMPT = "You are a professional dictionary checker. Your only job is to determine if the user's input is a common, valid, 5-letter English word (e.g., from Merriam-Webster). Respond with ONLY a single word: 'VALID' if it is a valid word. Respond with ONLY 'INVALID' if it is not found in a dictionary or is too obscure.";
+
+
+        // --- Game State ---
+        let secretWord = '';
+        let currentGuess = '';
+        let currentRow = 0;
+        let gameStatus = 'playing'; // 'playing', 'won', 'lost'
+        let isLoading = false; // Prevents spamming ENTER while checking
+        const keyColors = {}; // Tracks color for each key on the virtual keyboard
+
+        // --- DOM Elements ---
+        const gridElement = document.getElementById('game-grid');
+        const messageBox = document.getElementById('message-box');
+        const modal = document.getElementById('result-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalMessage = document.getElementById('modal-message');
+        const modalCloseBtn = document.getElementById('modal-close');
+
+        // --- Utility Functions ---
+
+        /**
+         * Shows a temporary message to the user.
+         * @param {string} message - The message to display.
+         * @param {number} duration - Duration in milliseconds.
+         */
+        function showMessage(message, duration = 1500) {
+            messageBox.textContent = message;
+            messageBox.style.opacity = '1';
+            setTimeout(() => {
+                messageBox.style.opacity = '0';
+            }, duration);
+        }
+
+        /**
+         * Utility to fetch with exponential backoff for resilience.
+         * @param {string} url - The API URL.
+         * @param {object} options - Fetch options (method, headers, body).
+         * @param {number} retries - Number of retries remaining.
+         * @returns {Promise<Response>}
+         */
+        async function fetchWithBackoff(url, options, retries = 3) {
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (response.ok) {
+                        return response;
+                    } else if (response.status === 429 && i < retries - 1) {
+                        // Rate limit error, wait with exponential backoff
+                        const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        throw new Error(`API returned status ${response.status}`);
+                    }
+                } catch (error) {
+                    if (i === retries - 1) {
+                        console.error("API call failed after multiple retries:", error);
+                        throw error;
+                    }
+                    // Connection error, retry after delay
+                    const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+            throw new Error("Exceeded maximum retries.");
+        }
+
+        /**
+         * Checks if a word is valid using the Gemini API with Google Search grounding.
+         * @param {string} word - The 5-letter word to check.
+         * @returns {Promise<boolean>} True if the word is valid, false otherwise.
+         */
+        async function isValidWord(word) {
+            const payload = {
+                contents: [{ parts: [{ text: word }] }],
+                tools: [{ "google_search": {} }],
+                systemInstruction: {
+                    parts: [{ text: WORD_CHECK_SYSTEM_PROMPT }]
+                },
+            };
+
+            try {
+                const response = await fetchWithBackoff(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const result = await response.json();
+                const text = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim().toUpperCase();
+
+                // If the model explicitly returns 'VALID', accept the word.
+                return text === 'VALID';
+
+            } catch (error) {
+                console.error("Error during word validation:", error);
+                // Default to allowing the word if the API check fails to prevent blocking the game, 
+                // but for strictness, we'll return false here.
+                return false;
+            }
+        }
+
+        /**
+         * Initializes the game state, picks a new word, and draws the grid/keyboard.
+         */
+        function initGame() {
+            // Pick a random secret word
+            secretWord = VALID_WORDS[Math.floor(Math.random() * VALID_WORDS.length)];
+            // console.log("Secret Word:", secretWord); // For development/testing
+            
+            // Reset state
+            currentGuess = '';
+            currentRow = 0;
+            gameStatus = 'playing';
+            isLoading = false;
+            gridElement.innerHTML = '';
+            modal.style.display = 'none';
+            Object.keys(keyColors).forEach(key => keyColors[key] = '');
+
+            // Draw the grid
+            for (let r = 0; r < MAX_ATTEMPTS; r++) {
+                const row = document.createElement('div');
+                row.className = 'grid grid-cols-5 gap-1.5 w-full';
+                for (let c = 0; c < WORD_LENGTH; c++) {
+                    const tileContainer = document.createElement('div');
+                    tileContainer.className = 'aspect-square flex items-center justify-center';
+                    const tile = document.createElement('div');
+                    tile.id = `tile-${r}-${c}`;
+                    tile.className = 'tile rounded-lg';
+                    tileContainer.appendChild(tile);
+                    row.appendChild(tileContainer);
+                }
+                gridElement.appendChild(row);
+            }
+
+            // Draw the keyboard
+            drawKeyboard();
+        }
+
+        /**
+         * Handles letter input (physical and virtual keyboard).
+         * @param {string} key - The key pressed (uppercase letter).
+         */
+        function handleLetter(key) {
+            if (currentGuess.length < WORD_LENGTH) {
+                currentGuess += key;
+                updateGrid();
+            }
+        }
+
+        /**
+         * Handles backspace input.
+         */
+        function handleBackspace() {
+            if (currentGuess.length > 0) {
+                currentGuess = currentGuess.slice(0, -1);
+                updateGrid();
+            }
+        }
+
+        /**
+         * Updates the text content of the current row's tiles.
+         */
+        function updateGrid() {
+            for (let c = 0; c < WORD_LENGTH; c++) {
+                const tile = document.getElementById(`tile-${currentRow}-${c}`);
+                const letter = currentGuess[c] || '';
+                tile.textContent = letter;
+                if (letter) {
+                    tile.classList.add('filled');
+                } else {
+                    tile.classList.remove('filled');
+                }
+            }
+        }
+
+        /**
+         * Processes the 'ENTER' key press. Now asynchronous for API check.
+         */
+        async function handleEnter() {
+            if (gameStatus !== 'playing' || isLoading) return;
+
+            if (currentGuess.length !== WORD_LENGTH) {
+                showMessage("Not enough letters");
+                return;
+            }
+            
+            isLoading = true;
+            showMessage("Checking word validity...", 5000); // Show loading message
+
+            const wordIsValid = await isValidWord(currentGuess);
+
+            isLoading = false;
+            showMessage(""); // Clear loading message immediately
+
+            if (!wordIsValid) {
+                showMessage("Not a valid word");
+                return;
+            }
+
+            // --- Word is Valid, continue game logic ---
+            
+            // Check the guess
+            checkGuess();
+
+            // Check win/loss condition
+            const isWin = currentGuess === secretWord;
+            const isLoss = currentRow === MAX_ATTEMPTS - 1; // Check if this was the last possible guess
+
+            if (isWin) {
+                gameStatus = 'won';
+                // Wait for animation to finish before showing modal
+                setTimeout(() => showResult('won'), (WORD_LENGTH * 100) + 1000); 
+            } else if (isLoss) {
+                gameStatus = 'lost';
+                setTimeout(() => showResult('lost'), (WORD_LENGTH * 100) + 1000);
+            } else {
+                // Move to next row
+                currentRow++;
+                currentGuess = '';
+            }
+        }
+
+        /**
+         * Compares the current guess to the secret word and applies colors.
+         */
+        function checkGuess() {
+            const guess = currentGuess.split('');
+            const secret = secretWord.split('');
+            const feedback = new Array(WORD_LENGTH).fill('absent');
+            const secretLetterCount = {};
+
+            // 1. Count letters in the secret word
+            secret.forEach(letter => {
+                secretLetterCount[letter] = (secretLetterCount[letter] || 0) + 1;
+            });
+
+            // 2. Find ALL 'correct' (green) letters and mark them
+            for (let i = 0; i < WORD_LENGTH; i++) {
+                if (guess[i] === secret[i]) {
+                    feedback[i] = 'correct';
+                    secretLetterCount[guess[i]]--;
+                }
+            }
+
+            // 3. Find 'present' (yellow) and 'absent' (gray) letters
+            for (let i = 0; i < WORD_LENGTH; i++) {
+                if (feedback[i] === 'correct') continue; // Skip already green letters
+
+                if (secretLetterCount[guess[i]] > 0) {
+                    feedback[i] = 'present';
+                    secretLetterCount[guess[i]]--;
+                } else {
+                    feedback[i] = 'absent';
+                }
+            }
+
+            // Apply colors to grid tiles and update keyboard
+            for (let i = 0; i < WORD_LENGTH; i++) {
+                const tile = document.getElementById(`tile-${currentRow}-${i}`);
+                const status = feedback[i];
+
+                // Remove previous styles and add new ones
+                tile.classList.remove('filled', 'correct', 'present', 'absent');
+                tile.classList.add(status);
+                tile.style.animationDelay = `${i * 0.1}s`; // Staggered flip animation
+
+                // Update keyboard colors
+                const letter = guess[i];
+                const existingStatus = keyColors[letter];
+
+                if (status === 'correct') {
+                    keyColors[letter] = 'correct'; // Green overrides everything
+                } else if (status === 'present' && existingStatus !== 'correct') {
+                    keyColors[letter] = 'present'; // Yellow overrides gray
+                } else if (status === 'absent' && !existingStatus) {
+                    keyColors[letter] = 'absent'; // Gray is set only if nothing else is
+                }
+            }
+
+            // Re-render the keyboard to show updated colors
+            drawKeyboard();
+        }
+
+        /**
+         * Draws the virtual keyboard based on the layout and current key colors.
+         */
+        function drawKeyboard() {
+            const keyboardRows = [
+                document.getElementById('keyboard-row-1'),
+                document.getElementById('keyboard-row-2'),
+                document.getElementById('keyboard-row-3')
+            ];
+
+            keyboardRows.forEach((rowElement, rowIndex) => {
+                rowElement.innerHTML = ''; // Clear existing keys
+                KEYBOARD_LAYOUT[rowIndex].forEach(key => {
+                    const keyElement = document.createElement('div');
+                    keyElement.textContent = key === 'BACKSPACE' ? '⌫' : key;
+                    keyElement.classList.add('key', 'rounded');
+
+                    // Set widths for special keys
+                    if (key === 'ENTER' || key === 'BACKSPACE') {
+                        keyElement.classList.add('key-lg');
+                    } else {
+                        keyElement.classList.add('w-8', 'h-12', 'flex-auto', 'max-w-[42px]');
+                    }
+
+                    // Apply color from state
+                    const keyClass = keyColors[key] || '';
+                    if (keyClass) {
+                        keyElement.classList.add(keyClass);
+                    }
+
+                    // Attach click handler
+                    keyElement.addEventListener('click', () => handleInput(key));
+                    rowElement.appendChild(keyElement);
+                });
+            });
+        }
+
+        /**
+         * Global input handler for both virtual and physical keyboard.
+         * @param {string} key - The key pressed.
+         */
+        function handleInput(key) {
+            if (gameStatus !== 'playing' || isLoading) return;
+
+            const normalizedKey = key.toUpperCase();
+
+            if (normalizedKey.length === 1 && /^[A-Z]$/.test(normalizedKey)) {
+                handleLetter(normalizedKey);
+            } else if (normalizedKey === 'ENTER') {
+                handleEnter();
+            } else if (normalizedKey === 'BACKSPACE' || normalizedKey === 'DELETE') {
+                handleBackspace();
+            }
+        }
+
+        /**
+         * Shows the win/loss modal.
+         * @param {string} status - 'won' or 'lost'.
+         */
+        function showResult(status) {
+            modal.style.display = 'flex';
+            if (status === 'won') {
+                modalTitle.textContent = "Congratulations!";
+                modalMessage.textContent = `You guessed the word in ${currentRow + 1} attempts!`;
+            } else {
+                modalTitle.textContent = "Game Over!";
+                modalMessage.textContent = `The word was ${secretWord}. Better luck next time.`;
+            }
+        }
+
+        // --- Event Listeners ---
+
+        // Physical Keyboard listener
+        document.addEventListener('keydown', (event) => {
+            handleInput(event.key);
+        });
+
+        // Modal close/play again button
+        modalCloseBtn.addEventListener('click', initGame);
+
+        // --- Initialization ---
+        window.onload = initGame;
+
+    </script>
+</body>
+</html>
